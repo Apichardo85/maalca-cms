@@ -65,6 +65,10 @@ namespace MaalCaCMS.Composers
             await CreateAffiliateLandingDocumentTypeAsync();
             await CreateTestimonialDocumentTypeAsync();
 
+            // Affiliate types (for tenant content via Delivery API)
+            await CreateBaseAffiliateAsync();
+            await CreateAffiliateChildTypesAsync();
+
             // Content folders for organizing content
             await CreateContentFoldersAsync();
         }
@@ -817,6 +821,124 @@ namespace MaalCaCMS.Composers
             };
             await _dataTypeService.CreateAsync(dt, Constants.Security.SuperUserKey);
             return dt;
+        }
+
+        // ── Affiliate Types ─────────────────────────────────────────────────
+
+        private async Task CreateBaseAffiliateAsync()
+        {
+            if (_contentTypeService.Get("baseAffiliate") != null) return;
+
+            var doc = new ContentType(_shortStringHelper, -1)
+            {
+                Alias = "baseAffiliate",
+                Name = "Base Affiliate",
+                Description = "Tipo base para afiliados del ecosistema MaalCa",
+                Icon = "icon-handshake",
+                AllowedAsRoot = true
+            };
+
+            doc.AddPropertyGroup("info", "Info");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "affiliateName"; p.Name = "Name"; p.Mandatory = true; }), "info");
+            doc.AddPropertyType(await PropAsync("Umbraco.TinyMCE", p => { p.Alias = "affiliateDescription"; p.Name = "Description"; }), "info");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "website"; p.Name = "Website"; }), "info");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "displayInitials"; p.Name = "Display Initials"; }), "info");
+
+            doc.AddPropertyGroup("contact", "Contact");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "contactName"; p.Name = "Contact Name"; }), "contact");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "contactEmail"; p.Name = "Email"; }), "contact");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "contactPhone"; p.Name = "Phone"; }), "contact");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextArea", p => { p.Alias = "address"; p.Name = "Address"; }), "contact");
+
+            doc.AddPropertyGroup("social", "Social Media");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "facebook"; p.Name = "Facebook"; }), "social");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "instagram"; p.Name = "Instagram"; }), "social");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "whatsapp"; p.Name = "WhatsApp"; }), "social");
+
+            doc.AddPropertyGroup("settings", "Settings");
+            doc.AddPropertyType(await PropAsync("Umbraco.TextBox", p => { p.Alias = "tenantId"; p.Name = "Tenant ID"; }), "settings");
+            doc.AddPropertyType(await PropAsync("Umbraco.TrueFalse", p => { p.Alias = "isActive"; p.Name = "Active"; }), "settings");
+            doc.AddPropertyType(await PropAsync("Umbraco.TrueFalse", p => { p.Alias = "dashboardEnabled"; p.Name = "Dashboard Enabled"; }), "settings");
+
+            await _contentTypeService.CreateAsync(doc, Constants.Security.SuperUserKey);
+        }
+
+        private async Task CreateAffiliateChildTypesAsync()
+        {
+            await EnsureAffiliateChildTypeAsync("affiliateService", "Affiliate Service", "icon-wrench", new[]
+            {
+                ("Umbraco.TextBox",   "serviceName",        "Service Name",  true),
+                ("Umbraco.TextArea",  "serviceDescription", "Description",   false),
+                ("Umbraco.Decimal",   "servicePrice",       "Price",         false),
+                ("Umbraco.Integer",   "serviceDuration",    "Duration (min)",false),
+                ("Umbraco.TextBox",   "serviceCategory",    "Category",      false),
+                ("Umbraco.TrueFalse", "isActive",           "Active",        false),
+            });
+
+            await EnsureAffiliateChildTypeAsync("affiliateTeamMember", "Affiliate Team Member", "icon-user", new[]
+            {
+                ("Umbraco.TextBox",   "memberName",  "Name",        true),
+                ("Umbraco.TextBox",   "role",        "Role",        false),
+                ("Umbraco.TextArea",  "bio",         "Bio",         false),
+                ("Umbraco.TextBox",   "specialties", "Specialties", false),
+                ("Umbraco.TrueFalse", "isAvailable", "Available",   false),
+            });
+
+            await EnsureAffiliateChildTypeAsync("affiliateSchedule", "Affiliate Schedule", "icon-calendar", new[]
+            {
+                ("Umbraco.TextBox",   "dayOfWeek", "Day",    true),
+                ("Umbraco.TextBox",   "openTime",  "Open",   false),
+                ("Umbraco.TextBox",   "closeTime", "Close",  false),
+                ("Umbraco.TrueFalse", "isClosed",  "Closed", false),
+            });
+
+            // Allow children under baseAffiliate
+            var parent = _contentTypeService.Get("baseAffiliate");
+            if (parent == null) return;
+
+            var svc   = _contentTypeService.Get("affiliateService");
+            var team  = _contentTypeService.Get("affiliateTeamMember");
+            var sched = _contentTypeService.Get("affiliateSchedule");
+
+            var allowed = new List<ContentTypeSort>();
+            if (svc != null)   allowed.Add(new ContentTypeSort(svc.Key, 0, svc.Alias));
+            if (team != null)  allowed.Add(new ContentTypeSort(team.Key, 1, team.Alias));
+            if (sched != null) allowed.Add(new ContentTypeSort(sched.Key, 2, sched.Alias));
+
+            if (parent.AllowedContentTypes?.Count() < allowed.Count)
+            {
+                parent.AllowedContentTypes = allowed;
+                await _contentTypeService.UpdateAsync(parent, Constants.Security.SuperUserKey);
+            }
+        }
+
+        private async Task EnsureAffiliateChildTypeAsync(
+            string alias, string name, string icon,
+            (string editor, string alias, string label, bool mandatory)[] props)
+        {
+            if (_contentTypeService.Get(alias) != null) return;
+
+            var doc = new ContentType(_shortStringHelper, -1)
+            {
+                Alias = alias,
+                Name = name,
+                Icon = icon,
+                AllowedAsRoot = false,
+                Description = name
+            };
+
+            doc.AddPropertyGroup("content", "Content");
+            foreach (var (editor, pAlias, label, mandatory) in props)
+            {
+                doc.AddPropertyType(await PropAsync(editor, p =>
+                {
+                    p.Alias = pAlias;
+                    p.Name = label;
+                    p.Mandatory = mandatory;
+                }), "content");
+            }
+
+            await _contentTypeService.CreateAsync(doc, Constants.Security.SuperUserKey);
         }
     }
 }
